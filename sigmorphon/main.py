@@ -50,6 +50,31 @@ def eval(lemmatizer, dataset, log_file=None):
     return float(correct) / total
 
 
+def run(input_file, output_file, model_base):
+    from io_utils.sigmorphon import Sigmorphon2CONLL
+    from io_utils.encodings import Encodings
+    from models.lemmatizers import FSTLemmatizer
+    from models.config import LemmatizerConfig
+
+    encodings = Encodings()
+    encodings.load(model_base + '.encodings')
+    config = LemmatizerConfig()
+    config.load(model_base + '.config')
+    lemmatizer = FSTLemmatizer(config, encodings, None, runtime=True)
+    lemmatizer.load(model_base + '.bestAcc')
+
+    ds_test = Sigmorphon2CONLL()
+    ds_test.read_from_file(input_file)
+    ds_test = ds_test.convert2conll()
+    f = open(output_file, 'w')
+    for seq in ds_test.sequences:
+        rez = lemmatizer.tag(seq)
+        for entry, l in zip(seq, rez):
+            f.write(entry.word + '\t' + l.encode('utf-8') + '\t' + entry.upos + '\n')
+
+    f.close()
+
+
 def train(train_file, dev_file, model_base, patience):
     from io_utils.sigmorphon import Sigmorphon2CONLL
     from io_utils.conll import Dataset
@@ -84,7 +109,7 @@ def train(train_file, dev_file, model_base, patience):
 
     lemmatizer = FSTLemmatizer(config, encodings, None, runtime=False)
     epoch = 0
-    batch_size = 1000
+    batch_size = 10
     while num_itt_no_improve > 0:
 
         epoch += 1
@@ -134,11 +159,13 @@ def train(train_file, dev_file, model_base, patience):
 
 
 if __name__ == '__main__':
-    memory = int(8000)
+    memory = int(512)
 
-    autobatch = False
-    dynet_config.set(mem=memory, random_seed=9, requested_gpus=1, autobatch=autobatch)
+    #autobatch = False
+    #dynet_config.set(mem=memory, random_seed=9, autobatch=autobatch)
     import dynet as dy
 
     if sys.argv[1] == "--train":
-        train(sys.argv[2], sys.argv[3], sys.argv[4], 10)
+        train(sys.argv[2], sys.argv[3], sys.argv[4], 200)
+    elif sys.argv[1] == "--run":
+        run(sys.argv[2], sys.argv[3], sys.argv[4])

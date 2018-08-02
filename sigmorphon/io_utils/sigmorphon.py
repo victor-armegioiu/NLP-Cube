@@ -9,9 +9,14 @@ class Sigmorphon2CONLL:
             for line in f.readlines():
                 line = line.replace("\n", "").replace("\r", "")
                 parts = line.split("\t")
-                src = parts[0]
-                dst = parts[1]
-                morph = parts[2]
+                if len(parts)==3:
+                    src = parts[0]
+                    dst = parts[1]
+                    morph = parts[2]
+                else:
+                    src=parts[0]
+                    dst=''
+                    morph=parts[1]
 
                 from conll import ConllEntry
                 entry = ConllEntry(len(seq) + 1, src, dst, morph, "_", "_", 0, "_", "", "_")
