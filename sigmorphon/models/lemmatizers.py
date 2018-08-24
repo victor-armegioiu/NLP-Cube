@@ -11,7 +11,7 @@
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either.expr(update=True)ess or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
@@ -44,13 +44,13 @@ class FSTLemmatizer:
         self.char_lookup = self.model.add_lookup_parameters((len(self.encodings.char2int), self.config.char_embeddings))
         if runtime:
             self.rnn = dy.LSTMBuilder(self.config.rnn_layers,
-                                      self.config.char_rnn_size * 2 + self.config.char_embeddings + self.config.tag_embeddings_size,
+                                      self.config.char_rnn_size * 2 + self.config.tag_embeddings_size,
                                       self.config.rnn_size,
                                       self.model)
         else:
             from utils import orthonormal_VanillaLSTMBuilder
             self.rnn = orthonormal_VanillaLSTMBuilder(self.config.rnn_layers,
-                                                      self.config.char_rnn_size * 2 + self.config.char_embeddings + self.config.tag_embeddings_size,
+                                                      self.config.char_rnn_size * 2 + self.config.tag_embeddings_size,
                                                       self.config.rnn_size,
                                                       self.model)
 
@@ -59,7 +59,7 @@ class FSTLemmatizer:
         # self.att_v = self.model.add_parameters((1, 200))
 
         self.start_lookup = self.model.add_lookup_parameters(
-            (1, self.config.char_rnn_size * 2 + self.config.char_embeddings + self.config.tag_embeddings_size))
+            (1, self.config.char_rnn_size * 2 + self.config.tag_embeddings_size))
 
         self.softmax_w = self.model.add_parameters((len(self.encodings.char2int) + 3, self.config.rnn_size))
         self.softmax_b = self.model.add_parameters((len(self.encodings.char2int) + 3))
@@ -71,13 +71,13 @@ class FSTLemmatizer:
         self.label2int['<INC>'] = ofs + 2
         self.last_output_emb = self.model.add_lookup_parameters((ofs + 3, self.config.char_embeddings))
 
-    def _attend(self, input_vectors, state, embeddings):
-        w1 = self.att_w1.expr()
-        w2 = self.att_w2.expr()
-        v = self.att_v.expr()
+    def _attend(self, input_vectors, state):
+        w1 = self.att_w1.expr(update=True)
+        w2 = self.att_w2.expr(update=True)
+        v = self.att_v.expr(update=True)
         attention_weights = []
 
-        w2dt = w2 * dy.concatenate([state.h()[-1], embeddings])
+        w2dt = w2 * state.s()[-1]
         for input_vector in input_vectors:
             attention_weight = v * dy.tanh(w1 * input_vector + w2dt)
             attention_weights.append(attention_weight)
@@ -101,36 +101,32 @@ class FSTLemmatizer:
         else:
             upos_emb = zero_vec
 
-        # if xpos in self.encodings.xpos2int:
-        #     xpos_emb = self.xpos_lookup[self.encodings.xpos2int[xpos]]
-        #     m2 = 1
-        # else:
-        #     xpos_emb = zero_vec
-        #
-        # if attrs in self.encodings.attrs2int:
-        #     attrs_emb = self.attrs_lookup[self.encodings.attrs2int[attrs]]
-        #     m3 = 1
-        # else:
-        #     attrs_emb = zero_vec
-        #
-        # scale = float(4.0) / (m1 + m2 + m3 + 1.0)
-        #
-        # scale = dy.scalarInput(scale)
         tag_emb = upos_emb  # (upos_emb + xpos_emb + attrs_emb + char_emb) * scale
         rnn = self.rnn.initial_state().add_input(self.start_lookup[0])
         num_predictions = 0
         i_src = 0
         i_labels = 0
-        last_emb = zero_vec
         uniword = unicode(word, 'utf-8')
+
+        if runtime:
+            self.rnn.set_dropouts(0, 0)
+        else:
+            self.rnn.set_dropouts(0.33, 0.33)
 
         while num_predictions < max_predictions:
             # attention = self._attend(states, rnn, tag_emb)
 
-            input = dy.concatenate([states[i_src], tag_emb, last_emb])
-            rnn = rnn.add_input(input)
+            input = dy.concatenate([states[i_src], tag_emb])
+            if runtime:
+                rnn = rnn.add_input(input)
+            else:
+                rnn = rnn.add_input(dy.dropout(input, 0.33))
 
-            softmax = dy.softmax(self.softmax_w.expr() * rnn.output() + self.softmax_b.expr())
+            hid = rnn.output()
+            if not runtime:
+                hid = dy.dropout(rnn.output(), 0.33)
+
+            softmax = dy.softmax(self.softmax_w.expr(update=True) * hid + self.softmax_b.expr(update=True))
             softmax_list.append(softmax)
             num_predictions += 1
             if runtime:
@@ -140,32 +136,9 @@ class FSTLemmatizer:
                 elif l_index == self.label2int['<INC>'] and i_src < len(states) - 1:
                     i_src += 1
 
-                if l_index == self.label2int['<INC>']:
-                    last_emb = self.last_output_emb[self.label2int['<INC>']]
-                elif l_index == self.label2int['<COPY>']:
-                    char = uniword[i_src]
-                    if char in self.encodings.char2int:
-                        last_emb = self.last_output_emb[self.encodings.char2int[char]]
-                    else:
-                        last_emb = self.last_output_emb[self.encodings.char2int['<UNK>']]
-                else:
-                    last_emb = self.last_output_emb[l_index]
-
             else:
                 if gs_labels[i_labels] == '<INC>' and i_src < len(states) - 1:
                     i_src += 1
-
-                if gs_labels[i_labels] == '<INC>':
-                    last_emb = self.last_output_emb[self.label2int['<INC>']]
-                elif gs_labels[i_labels] == '<COPY>':
-                    char = uniword[i_src]
-                    if char in self.encodings.char2int:
-                        last_emb = self.last_output_emb[self.encodings.char2int[char]]
-                    else:
-                        last_emb = self.last_output_emb[self.encodings.char2int['<UNK>']]
-                else:
-                    if gs_labels[i_labels] in self.encodings.char2int:
-                        last_emb = self.last_output_emb[self.encodings.char2int[gs_labels[i_labels]]]
 
             i_labels += 1
 
@@ -369,9 +342,9 @@ class BDRNNLemmatizer:
         self.softmax_casing_b = self.model.add_parameters((2))
 
     def _attend(self, input_vectors, state, embeddings):
-        w1 = self.att_w1.expr()
-        w2 = self.att_w2.expr()
-        v = self.att_v.expr()
+        w1 = self.att_w1.expr(update=True)
+        w2 = self.att_w2.expr(update=True)
+        v = self.att_v.expr(update=True)
         attention_weights = []
 
         w2dt = w2 * dy.concatenate([state.h()[-1], embeddings])
@@ -411,8 +384,9 @@ class BDRNNLemmatizer:
             input = dy.concatenate([attention, char_emb])
             rnn = rnn.add_input(input)
 
-            softmax = dy.softmax(self.softmax_w.expr() * rnn.output() + self.softmax_b.expr())
-            softmax_casing = dy.softmax(self.softmax_casing_w.expr() * rnn.output() + self.softmax_casing_b.expr())
+            softmax = dy.softmax(self.softmax_w.expr(update=True) * rnn.output() + self.softmax_b.expr(update=True))
+            softmax_casing = dy.softmax(
+                self.softmax_casing_w.expr(update=True) * rnn.output() + self.softmax_casing_b.expr(update=True))
             softmax_list.append([softmax, softmax_casing])
             if num_chars == 0:
                 s_index = np.argmax(softmax.npvalue())

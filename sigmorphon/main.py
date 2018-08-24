@@ -109,7 +109,7 @@ def train(train_file, dev_file, model_base, patience):
 
     lemmatizer = FSTLemmatizer(config, encodings, None, runtime=False)
     epoch = 0
-    batch_size = 10
+    batch_size = 100
     while num_itt_no_improve > 0:
 
         epoch += 1
@@ -152,20 +152,22 @@ def train(train_file, dev_file, model_base, patience):
         sys.stdout.write(" devset accuracy is " + str(dev_acc) + "\n")
         if dev_acc > best_dev_acc:
             best_dev_acc = dev_acc
+            print ("\tStoring " + model_base + ".bestAcc")
             lemmatizer.save(model_base + ".bestAcc")
             num_itt_no_improve = patience
         lemmatizer.save(model_base + ".last")
+        print ("\tStoring " + model_base + ".last")
         num_itt_no_improve -= 1
 
 
 if __name__ == '__main__':
     memory = int(512)
 
-    #autobatch = False
-    #dynet_config.set(mem=memory, random_seed=9, autobatch=autobatch)
+    # autobatch = False
+    # dynet_config.set(mem=memory, random_seed=9, autobatch=autobatch)
     import dynet as dy
 
     if sys.argv[1] == "--train":
-        train(sys.argv[2], sys.argv[3], sys.argv[4], 200)
+        train(sys.argv[2], sys.argv[3], sys.argv[4], 50)
     elif sys.argv[1] == "--run":
         run(sys.argv[2], sys.argv[3], sys.argv[4])
